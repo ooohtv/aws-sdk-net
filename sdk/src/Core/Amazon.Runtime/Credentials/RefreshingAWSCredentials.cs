@@ -85,6 +85,8 @@ namespace Amazon.Runtime
         private readonly SemaphoreSlim _updateGeneratedCredentialsSemaphore = new SemaphoreSlim(1, 1);
 #endif
 
+        [ThreadStatic] private static bool hasSemaphoreLock;
+
         #endregion
 
         #endregion
@@ -117,6 +119,7 @@ namespace Amazon.Runtime
         public override ImmutableCredentials GetCredentials()
         {
             _updateGeneratedCredentialsSemaphore.Wait();
+            hasSemaphoreLock = true;
             try
             {
                 // If credentials are expired or we don't have any state yet, update
@@ -125,10 +128,12 @@ namespace Amazon.Runtime
                     currentState = GenerateNewCredentials();
                     UpdateToGeneratedCredentials(currentState);
                 }
+
                 return currentState.Credentials.Copy();
             }
             finally
             {
+                hasSemaphoreLock = false;
                 _updateGeneratedCredentialsSemaphore.Release();
             }
         }
@@ -252,30 +257,37 @@ namespace Amazon.Runtime
 
             if (disposing)
             {
+                _logger.InfoFormat("Disposing");
                 _updateGeneratedCredentialsSemaphore.Dispose();
             }
 
             _disposed = true;
         }
-        
+
         #endregion
 
         #region Public Methods
 
-        
         /// <summary>
         /// Clears currently-stored credentials, forcing the next GetCredentials call to generate new credentials.
         /// </summary>
         public virtual void ClearCredentials()
         {
-            _updateGeneratedCredentialsSemaphore.Wait();
+            if (!hasSemaphoreLock)
+            {
+                _updateGeneratedCredentialsSemaphore.Wait();
+            }
+
             try
             {
                 currentState = null;
             }
             finally
             {
-                _updateGeneratedCredentialsSemaphore.Release();
+                if (!hasSemaphoreLock)
+                {
+                    _updateGeneratedCredentialsSemaphore.Release();
+                }
             }
         }
 
